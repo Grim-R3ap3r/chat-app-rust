@@ -29,14 +29,16 @@ async fn events(queue: &State<Sender<Message>>, mut end: Shutdown) -> EventStrea
     EventStream! {
         loop {
             let msg = select! {
+                // Receive a message from the broadcast queue
                 msg = rx.recv() => match msg {
                     Ok(msg) => msg,
-                    Err(RecvError::Closed) => break,
-                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => break, // If the channel is closed, exit the loop
+                    Err(RecvError::Lagged(_)) => continue, // If there is a backlog, continue to the next iteration
                 },
-                _ = &mut end => break,
+                _ = &mut end => break, // If a shutdown signal is received, exit the loop
             };
 
+            // Send the received message as a JSON event in the server-sent event stream
             yield Event::json(&msg);
         }
     }
@@ -45,14 +47,17 @@ async fn events(queue: &State<Sender<Message>>, mut end: Shutdown) -> EventStrea
 /// Receive a message from a form submission and broadcast it to any receivers.
 #[post("/message", data = "<form>")]
 fn post(form: Form<Message>, queue: &State<Sender<Message>>) {
-    // A send 'fails' if there are no active subscribers. That's okay.
+    // Broadcast the received message to all subscribers by sending it to the broadcast queue
     let _res = queue.send(form.into_inner());
 }
 
 #[launch]
 fn rocket() -> _ {
     rocket::build()
+        // Create a broadcast channel to send messages between components of the application
         .manage(channel::<Message>(1024).0)
+        // Mount the routes for handling form submissions and server-sent events
         .mount("/", routes![post, events])
+        // Mount the file server to serve static files from the "static" directory
         .mount("/", FileServer::from(relative!("static")))
 }
